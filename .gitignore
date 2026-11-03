@@ -1,0 +1,11 @@
+# Secrets: never commit your Jira token
+.env
+
+# Local data (each install keeps its own)
+data/
+
+# Tooling
+node_modules/
+*.log
+.DS_Store
+Thumbs.db
