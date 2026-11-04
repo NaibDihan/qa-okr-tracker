@@ -9,6 +9,7 @@
   },
   "scripts": {
     "start": "node server.js",
-    "seed:demo": "node scripts/seed-demo.js"
+    "seed:demo": "node scripts/seed-demo.js",
+    "upload-data": "node scripts/upload-data.js"
   }
 }

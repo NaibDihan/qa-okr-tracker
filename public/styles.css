@@ -378,3 +378,8 @@ code { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; fo
 .chip.proj button:hover { color: var(--danger); background: var(--surface); }
 .ellipsis { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 @media (max-width: 860px) { .eng-row { grid-template-columns: 1fr; } }
+
+/* Password screen */
+.login-screen { position: fixed; inset: 0; z-index: 100; display: grid; place-items: center; padding: 16px; background: var(--bg-soft); }
+.login-card { width: 100%; max-width: 340px; padding: 24px; display: flex; flex-direction: column; gap: 4px; }
+.login-card input { width: 100%; }

@@ -35,8 +35,42 @@ async function api(path, { method = "GET", body } = {}) {
     body: body ? JSON.stringify(body) : undefined,
   });
   const data = await res.json().catch(() => ({}));
+  if (res.status === 401 && data.auth && path !== "/api/login") {
+    showLogin();
+    throw new Error("Password required");
+  }
   if (!res.ok) throw new Error(data.error || `Request failed (${res.status})`);
   return data;
+}
+
+// Password screen (only shown when the server has APP_PASSWORD set).
+function showLogin() {
+  if ($("#login")) return;
+  const el = document.createElement("div");
+  el.id = "login";
+  el.className = "login-screen";
+  el.innerHTML = `
+    <form class="card login-card">
+      <div class="brand" style="padding:0 0 14px"><span class="brand-mark">
+        <svg viewBox="0 0 24 24" width="16" height="16"><path d="M5 12.5l4.5 4.5L19 7.5" stroke="currentColor" stroke-width="2.6" fill="none" stroke-linecap="round" stroke-linejoin="round"/></svg>
+      </span><span>QA OKR Tracker</span></div>
+      <label class="field">Team password<input type="password" name="pw" autocomplete="current-password" required /></label>
+      <div class="small" id="login-err" style="color:var(--danger);min-height:18px;margin-top:6px"></div>
+      <button class="btn primary" type="submit" style="width:100%">Sign in</button>
+    </form>`;
+  document.body.appendChild(el);
+  const input = $("input", el);
+  setTimeout(() => input.focus(), 0);
+  $("form", el).addEventListener("submit", async (ev) => {
+    ev.preventDefault();
+    try {
+      await api("/api/login", { method: "POST", body: { password: input.value } });
+      location.reload();
+    } catch (e) {
+      $("#login-err").textContent = e.message;
+      input.select();
+    }
+  });
 }
 
 let toastTimer;
@@ -88,9 +122,14 @@ $("#theme-toggle").addEventListener("click", () => {
 
 function renderJiraChip() {
   const j = app.meta.jira;
-  $("#jira-chip").innerHTML = j.mode === "live"
+  $("#jira-chip").innerHTML = (j.mode === "live"
     ? `<span class="dot live"></span><b>Jira connected</b><div class="small">${esc(j.baseUrl.replace(/^https?:\/\//, ""))}</div>`
-    : `<span class="dot demo"></span><b>Demo mode</b><div class="small">Jira not connected</div>`;
+    : `<span class="dot demo"></span><b>Demo mode</b><div class="small">Jira not connected</div>`)
+    + (app.meta.passwordOn ? `<button type="button" class="btn ghost sm" id="sign-out" style="margin-top:6px;padding:2px 0;min-height:0">Sign out</button>` : "");
+  $("#sign-out")?.addEventListener("click", async () => {
+    await api("/api/logout", { method: "POST" }).catch(() => {});
+    location.reload();
+  });
 }
 
 // ---------- Navigation ----------
@@ -310,7 +349,7 @@ function dashboardBody(r) {
 
   return `
     <div class="stack">
-      ${r.jiraMode === "demo" ? `<div class="alert">Demo mode: Jira numbers are generated samples. Add your Jira credentials to <code>.env</code> to see real data.</div>` : ""}
+      ${r.jiraMode === "demo" ? `<div class="alert">Demo mode: Jira numbers are generated samples. Set the Jira environment variables (in <code>.env</code> locally, or in Vercel) to see real data.</div>` : ""}
       ${r.warnings.map((w) => `<div class="alert">${esc(w)}</div>`).join("")}
 
       <div class="card card-pad eng-head">
@@ -769,7 +808,7 @@ async function renderSetup(view) {
     <div class="stack">
       <div class="card">
         <div class="card-head">
-          <div><h2>Jira connection</h2><p>Set in the <code>.env</code> file next to <code>server.js</code>; restart the app after changing it.</p></div>
+          <div><h2>Jira connection</h2><p>Set by environment variables: the <code>.env</code> file locally, or Project Settings → Environment Variables on Vercel. Restart or redeploy after changing them.</p></div>
           <button class="btn" id="s-test">Test connection</button>
         </div>
         <div class="card-pad grid-2">
@@ -779,6 +818,7 @@ async function renderSetup(view) {
             <dt>Account</dt><dd>${esc(j.email || "—")}</dd>
           </dl>
           <dl class="kv">
+            <dt>Data storage</dt><dd>${app.meta.storage?.kind === "redis" ? "Upstash Redis (cloud)" : app.meta.storage?.kind === "missing" ? `<span style="color:var(--danger)">Not connected</span>` : "Local file"}</dd>
             <dt>Bug issue type</dt><dd><code>${esc(j.bugType)}</code></dd>
             <dt>Rejected status</dt><dd><code>${esc(j.statuses.rejected)}</code></dd>
             <dt>QA statuses</dt><dd><code>${esc(j.statuses.inQa)}</code> → <code>${esc(j.statuses.closed)}</code></dd>

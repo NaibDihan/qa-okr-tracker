@@ -3,7 +3,8 @@
 A small web app that tracks QA engineers' OKRs. It pulls bug and QA-cycle data from Jira Cloud and collects the rest through a monthly entry form.
 
 - **No install step.** Plain Node.js, no packages. There is nothing to `npm install`.
-- **Runs locally** at http://localhost:3000. Data is stored in one file, `data/okr.json`.
+- **Runs locally** at http://localhost:3000 with data in one file, `data/okr.json`.
+- **Runs on Vercel** with data in a free Upstash Redis database (see below).
 - **Light and dark mode.** Toggle at the bottom of the sidebar.
 
 ## Requirements
@@ -46,6 +47,22 @@ The API account needs **Browse projects** on the QA projects and the **Browse us
 
 The `.env` file holds your token. Don't commit or share it.
 
+## Deploy on Vercel
+
+Vercel can't save files (its disk is read-only and reset between requests), so the data goes in a small cloud database instead. Upstash Redis has a free tier and Vercel connects it for you.
+
+1. **Push the code to GitHub** and import the repo in Vercel. `vercel.json` already tells Vercel how to run it, so no build settings are needed.
+2. **Add the database:** in your Vercel project open **Storage → Create Database → Upstash for Redis** (from the Marketplace), choose the free plan, and **connect it to this project**. Vercel adds `KV_REST_API_URL` and `KV_REST_API_TOKEN` for you.
+3. **Environment variables** (Project → Settings → Environment Variables):
+   - `JIRA_BASE_URL`, `JIRA_EMAIL`, `JIRA_API_TOKEN`
+   - `APP_PASSWORD`: a team password. The site is public on the internet, so set this. Without it, anyone with the link can see your Jira data and change entries.
+4. **Redeploy** (Deployments → ⋯ → Redeploy). Environment changes only apply to new deployments.
+5. Open the site, then **Setup → Test connection**. The Setup page also shows "Data storage: Upstash Redis (cloud)".
+
+**Moving your local setup to Vercel (optional):** copy `KV_REST_API_URL` and `KV_REST_API_TOKEN` from Vercel (Storage → your database → `.env.local` tab) into your local `.env`, then run `npm run upload-data`. It copies engineers, projects, entries, comments and targets from `data/okr.json` to the cloud database. It refuses if the cloud already has engineers; `npm run upload-data -- --force` replaces the cloud data.
+
+Keep `data/` in `.gitignore`. Committing it wouldn't help: Vercel can't write to it, so the site would show a frozen copy.
+
 ## How each KR is calculated
 
 | KR | Source | Formula |
@@ -61,7 +78,7 @@ The `.env` file holds your token. Don't commit or share it.
 **Jira scope:**
 - "Bugs reported" means issues of type Bug whose **reporter** is the engineer, in the engineer's assigned projects, counted in the month they were **created**.
 - QA cycle time covers **all issue types** in the engineer's projects, counted in the month they were **Closed**. Each move into In QA restarts the timer. Any move to a status other than Closed resets it. A ticket counts only if it goes In QA → Closed directly.
-- Status names are set in `.env`. Case and apostrophe style don't matter.
+- Status names are set by environment variables (see `.env.example`). Case and apostrophe style don't matter.
 
 **Periods and status:**
 - **Month** and **custom range** views show values only.
@@ -89,16 +106,21 @@ The `.env` file holds your token. Don't commit or share it.
 ## Project layout
 
 ```
-server.js              HTTP server and API routes
-lib/db.js              JSON-file storage (atomic writes)
+server.js              Local server (npm start)
+api/index.js           Vercel entry point
+vercel.json            Vercel settings
+lib/app.js             API routes, optional password, static files
+lib/db.js              Data functions
+lib/store.js           Storage: local JSON file or Upstash Redis
 lib/jira.js            Jira Cloud client, QA-cycle rule, demo data
 lib/krs.js             KR definitions, calculations, status rules
 lib/period.js          Month / quarter / custom ranges
 lib/report-export.js   Excel + PDF report layouts
 lib/xlsx.js, pdf.js, zip.js   Dependency-free file writers
 public/                Frontend (index.html, app.js, styles.css)
-scripts/seed-demo.js   Sample data
-data/okr.json          Your data (created on first run). Back this file up.
+scripts/seed-demo.js   Sample data (local file only)
+scripts/upload-data.js Copy local data to the cloud database
+data/okr.json          Local data (created on first run). Back this file up.
 ```
 
 ## Later: Bitbucket
