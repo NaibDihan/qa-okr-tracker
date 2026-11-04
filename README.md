@@ -39,6 +39,8 @@ To clear the demo data later, stop the app and delete the `data` folder, or run 
    JIRA_API_TOKEN=your-token
    ```
 3. Restart the app (`Ctrl + C`, then `npm start`).
+
+**Several Jira sites (for example your company's and a client's):** list them in `JIRA_BASE_URL` separated by commas, e.g. `JIRA_BASE_URL=https://asthait.atlassian.net,https://emctech.atlassian.net`. One Atlassian account is used for all of them (an API token works on every site that account can open). The people and project pickers show which site each comes from, and a project can be assigned from any site. Projects saved before you added a second site belong to the first site in the list. If a site doesn't let your account list people, Setup shows a warning for that site and still lists the others.
 4. Go to **Setup** and press **Test connection**.
 5. Press **Add QA engineer** and pick people from the searchable list of everyone in your Jira.
 6. For each engineer, press **+ Project** and pick their projects from the searchable list of your Jira projects.

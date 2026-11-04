@@ -10,6 +10,9 @@ const monthLabel = (key) => { const [y, m] = key.split("-").map(Number); return 
 const now = new Date();
 const thisMonth = `${now.getFullYear()}-${pad(now.getMonth() + 1)}`;
 const thisQuarter = { year: now.getFullYear(), q: Math.floor(now.getMonth() / 3) + 1 };
+// Jira sites (filled from /api/meta). With more than one, projects and tickets show which site they're on.
+const multiSite = () => (app.meta?.jira?.sites || []).length > 1;
+const siteName = (url) => String(url || "").replace(/^https?:\/\//, "").split(".")[0];
 const initials = (name) => name.split(/\s+/).filter(Boolean).slice(-2).map((w) => w[0]).join("").toUpperCase();
 
 const ICONS = {
@@ -123,7 +126,7 @@ $("#theme-toggle").addEventListener("click", () => {
 function renderJiraChip() {
   const j = app.meta.jira;
   $("#jira-chip").innerHTML = (j.mode === "live"
-    ? `<span class="dot live"></span><b>Jira connected</b><div class="small">${esc(j.baseUrl.replace(/^https?:\/\//, ""))}</div>`
+    ? `<span class="dot live"></span><b>Jira connected</b><div class="small">${esc(j.sites.map((x) => x.label).join(" · "))}</div>`
     : `<span class="dot demo"></span><b>Demo mode</b><div class="small">Jira not connected</div>`)
     + (app.meta.passwordOn ? `<button type="button" class="btn ghost sm" id="sign-out" style="margin-top:6px;padding:2px 0;min-height:0">Sign out</button>` : "");
   $("#sign-out")?.addEventListener("click", async () => {
@@ -261,8 +264,12 @@ function krTable(result) {
 }
 
 function drillDown(result) {
-  const base = app.meta.jira.mode === "live" ? app.meta.jira.baseUrl : null;
-  const link = (k) => (base ? `<a href="${esc(base)}/browse/${esc(k)}" target="_blank" rel="noopener">${esc(k)}</a>` : esc(k));
+  const live = app.meta.jira.mode === "live";
+  const link = (k, site) => {
+    const base = live ? site || app.meta.jira.baseUrl : null;
+    const tag = multiSite() && site ? ` <span class="muted small">${esc(siteName(site))}</span>` : "";
+    return base ? `<a href="${esc(base)}/browse/${esc(k)}" target="_blank" rel="noopener">${esc(k)}</a>${tag}` : esc(k);
+  };
   const { bugs, cycle } = result.details;
   return `
     <details class="drill">
@@ -272,14 +279,14 @@ function drillDown(result) {
           <h3 style="margin-bottom:8px">Bugs reported</h3>
           <div class="scroll"><table class="simple">
             <thead><tr><th>Key</th><th>Created</th><th>Status</th></tr></thead>
-            <tbody>${bugs.map((b) => `<tr><td>${link(b.key)}</td><td class="num">${b.created}</td><td>${b.rejected ? `<span class="pill at-risk">${esc(b.status)}</span>` : esc(b.status)}</td></tr>`).join("") || `<tr><td colspan="3" class="muted">None</td></tr>`}</tbody>
+            <tbody>${bugs.map((b) => `<tr><td>${link(b.key, b.site)}</td><td class="num">${b.created}</td><td>${b.rejected ? `<span class="pill at-risk">${esc(b.status)}</span>` : esc(b.status)}</td></tr>`).join("") || `<tr><td colspan="3" class="muted">None</td></tr>`}</tbody>
           </table></div>
         </div>
         <div>
           <h3 style="margin-bottom:8px">Tickets In QA → Closed</h3>
           <div class="scroll"><table class="simple">
             <thead><tr><th>Key</th><th>Closed</th><th style="text-align:right">Hours in QA</th></tr></thead>
-            <tbody>${cycle.map((c) => `<tr><td>${link(c.key)}</td><td class="num">${c.closed}</td><td class="num" style="text-align:right">${c.hours.toFixed(2)}</td></tr>`).join("") || `<tr><td colspan="3" class="muted">None</td></tr>`}</tbody>
+            <tbody>${cycle.map((c) => `<tr><td>${link(c.key, c.site)}</td><td class="num">${c.closed}</td><td class="num" style="text-align:right">${c.hours.toFixed(2)}</td></tr>`).join("") || `<tr><td colspan="3" class="muted">None</td></tr>`}</tbody>
           </table></div>
         </div>
       </div>
@@ -814,7 +821,7 @@ async function renderSetup(view) {
         <div class="card-pad grid-2">
           <dl class="kv">
             <dt>Status</dt><dd>${live ? `<span class="dot live"></span>Connected` : `<span class="dot demo"></span>Demo mode (sample people and projects)`}</dd>
-            <dt>Site</dt><dd>${esc(j.baseUrl || "—")}</dd>
+            <dt>${j.sites.length > 1 ? "Sites" : "Site"}</dt><dd>${j.sites.length ? j.sites.map((x) => esc(x.url.replace(/^https?:\/\//, ""))).join("<br>") : "—"}</dd>
             <dt>Account</dt><dd>${esc(j.email || "—")}</dd>
           </dl>
           <dl class="kv">
@@ -841,8 +848,10 @@ async function renderSetup(view) {
     catch (e) { toast(e.message, true); }
   });
 
+  // Both return { users | projects, warnings }. A warning means one Jira site couldn't be read.
   const getUsers = async (refresh) => (jiraUsers = !refresh && jiraUsers ? jiraUsers : await api(`/api/jira/users${refresh ? "?refresh=1" : ""}`));
   const getProjects = async (refresh) => (jiraProjects = !refresh && jiraProjects ? jiraProjects : await api(`/api/jira/projects${refresh ? "?refresh=1" : ""}`));
+  const siteWarnings = (w) => (w || []).map((x) => `<div class="alert" style="margin-bottom:8px">Couldn't read one Jira site: ${esc(x)}</div>`).join("");
 
   // ---- Add engineer picker ----
   const openUserPicker = async (refresh = false) => {
@@ -850,7 +859,7 @@ async function renderSetup(view) {
     panel.classList.remove("hidden");
     panel.innerHTML = `<div class="loading" style="padding:20px"><span class="spin"></span>Loading people from Jira…</div>`;
     try {
-      const users = await getUsers(refresh);
+      const { users, warnings } = await getUsers(refresh);
       const added = new Set(app.engineers.map((e) => e.jiraAccountId).filter(Boolean));
       const available = users.filter((u) => !added.has(u.accountId));
       panel.innerHTML = `
@@ -862,6 +871,7 @@ async function renderSetup(view) {
             <button class="btn sm ghost" id="u-close">Close</button>
           </div>
         </div>
+        ${siteWarnings(warnings)}
         <div id="u-list"></div>`;
       $("#u-close").addEventListener("click", () => panel.classList.add("hidden"));
       $("#u-refresh").addEventListener("click", () => openUserPicker(true));
@@ -872,7 +882,7 @@ async function renderSetup(view) {
         searchText: (u) => `${u.name} ${u.email}`,
         itemHtml: (u) => `
           <span class="avatar sm">${esc(initials(u.name))}</span>
-          <span class="pick-main"><b>${esc(u.name)}</b>${u.email ? `<span class="muted small">${esc(u.email)}</span>` : ""}</span>
+          <span class="pick-main"><b>${esc(u.name)}</b>${u.email || multiSite() ? `<span class="muted small">${esc([u.email, multiSite() ? (u.sites || []).join(", ") : ""].filter(Boolean).join(" · "))}</span>` : ""}</span>
           <span class="pick-act">${icon("plus")} Add</span>`,
         onPick: async (u) => {
           try {
@@ -904,33 +914,35 @@ async function renderSetup(view) {
     slot.classList.remove("hidden");
     slot.innerHTML = `<div class="loading" style="padding:14px"><span class="spin"></span>Loading projects from Jira…</div>`;
     try {
-      const projects = await getProjects(false);
-      const owner = (key) => app.projects.find((p) => p.jiraKey === key);
-      const items = projects.filter((p) => owner(p.key)?.engineerId !== eng.id);
+      const { projects, warnings } = await getProjects(false);
+      // Saved projects come back from /api/projects with their site filled in.
+      const owner = (p) => app.projects.find((x) => x.jiraKey === p.key && (!p.site || x.site === p.site));
+      const items = projects.filter((p) => owner(p)?.engineerId !== eng.id);
       searchList(slot, {
         items,
         placeholder: `Search ${projects.length} Jira projects by key or name…`,
         empty: "All projects are already assigned to this engineer.",
-        searchText: (p) => `${p.key} ${p.name}`,
+        searchText: (p) => `${p.key} ${p.name} ${p.siteLabel || ""}`,
         itemHtml: (p) => {
-          const o = owner(p.key);
+          const o = owner(p);
           const ownerName = o?.engineerId ? app.engineers.find((e) => e.id === o.engineerId)?.name : null;
           return `<span class="proj-key">${esc(p.key)}</span>
-            <span class="pick-main"><b>${esc(p.name)}</b>${ownerName ? `<span class="muted small">Currently: ${esc(ownerName)}</span>` : ""}</span>
+            <span class="pick-main"><b>${esc(p.name)}</b>${ownerName || multiSite() ? `<span class="muted small">${esc([multiSite() ? p.siteLabel : "", ownerName ? `Currently: ${ownerName}` : ""].filter(Boolean).join(" · "))}</span>` : ""}</span>
             <span class="pick-act">${icon("plus")} ${ownerName ? "Move here" : "Assign"}</span>`;
         },
         onPick: async (p) => {
-          const o = owner(p.key);
+          const o = owner(p);
           const ownerName = o?.engineerId ? app.engineers.find((e) => e.id === o.engineerId)?.name : null;
           if (ownerName && !confirm(`${p.key} is assigned to ${ownerName}. A project has one QA. Move it to ${eng.name}?`)) return;
           try {
-            await api("/api/projects/assign", { method: "PUT", body: { jiraKey: p.key, name: p.name, engineerId: eng.id } });
+            await api("/api/projects/assign", { method: "PUT", body: { jiraKey: p.key, name: p.name, engineerId: eng.id, site: p.site || "" } });
             toast(`${p.key} assigned to ${eng.name}`);
             await loadBase();
             drawList();
           } catch (e) { toast(e.message, true); }
         },
       });
+      if (warnings?.length) slot.insertAdjacentHTML("afterbegin", siteWarnings(warnings));
     } catch (e) {
       slot.innerHTML = `<div class="alert">${esc(e.message)}</div>`;
     }
@@ -955,7 +967,7 @@ async function renderSetup(view) {
             </div>
           </div>
           <div class="eng-projects">
-            ${projs.map((p) => `<span class="chip proj" title="${esc(p.name)}">${esc(p.jiraKey)}<button type="button" data-unassign="${p.id}" aria-label="Remove ${esc(p.jiraKey)}">×</button></span>`).join("")}
+            ${projs.map((p) => `<span class="chip proj" title="${esc(p.name)}${p.site ? ` · ${esc(siteName(p.site))}` : ""}">${esc(p.jiraKey)}${multiSite() && p.site ? `<span class="chip-site">${esc(siteName(p.site))}</span>` : ""}<button type="button" data-unassign="${p.id}" aria-label="Remove ${esc(p.jiraKey)}">×</button></span>`).join("")}
             <button type="button" class="btn sm" data-addproj>${icon("plus")} Project</button>
           </div>
           <div class="eng-actions">
