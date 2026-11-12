@@ -216,7 +216,7 @@ function bindPeriodControl(root, p, onChange) {
 }
 
 // ---------- Shared: KR table ----------
-function krTable(result) {
+function krTable(result, { notes = true } = {}) {
   const { period, rows } = result;
   const isQ = period.mode === "quarter";
   const multi = period.months.length > 1;
@@ -229,7 +229,7 @@ function krTable(result) {
       ${multi ? period.months.map((m) => `<th class="r">${esc(m.label.split(" ")[0])}</th>`).join("") : `<th class="r">Value</th>`}
       ${multi ? `<th class="r total">${isQ ? "Quarter" : "Total"}</th>` : ""}
       ${isQ ? `<th class="r">% to target</th><th>Status</th>` : ""}
-      <th>Notes / comments</th>
+      ${notes ? `<th>Notes / comments</th>` : ""}
     </tr>`;
 
   let lastCat = null;
@@ -254,9 +254,9 @@ function krTable(result) {
         ${multi ? `<td class="val total">${esc(r.total.display)}<span class="inputs">${esc(r.total.inputs)}</span></td>` : ""}
         ${isQ ? `<td class="val">${r.progress === null || r.progress === undefined ? `<span class="muted">—</span>` : r.progress.toFixed(2)}</td>
                  <td>${pill(r.status, r.statusNote)}${r.status === "pending" && r.statusNote ? `<div class="small muted" style="margin-top:4px">${esc(r.statusNote)}</div>` : ""}</td>` : ""}
-        <td>${r.comments.length
+        ${notes ? `<td>${r.comments.length
           ? `<ul class="note-list">${r.comments.map((c) => `<li><span class="m">${esc(c.label.split(" ")[0])}</span>${esc(c.text)}</li>`).join("")}</ul>`
-          : `<span class="muted small">—</span>`}</td>
+          : `<span class="muted small">—</span>`}</td>` : ""}
       </tr>`;
   }).join("");
 
@@ -698,7 +698,7 @@ async function renderReports(view) {
       s.ids = cb.checked ? [...new Set([...s.ids, id])] : s.ids.filter((x) => x !== id);
       drawPicks();
     }));
-    $("#r-hint").textContent = s.ids.length === 0 ? "Pick at least one engineer" : s.ids.length === 1 ? "Individual report" : `Team report · ${s.ids.length} engineers`;
+    $("#r-hint").textContent = s.ids.length === 0 ? "Pick at least one engineer" : s.ids.length === 1 ? "Individual report" : `Team Report · ${s.ids.length} members (team averages only)`;
     $("#r-all").textContent = s.ids.length === activeEngineers().length ? "Clear all" : "Select all";
   };
   const drawPeriod = () => {
@@ -730,37 +730,49 @@ async function renderReports(view) {
 }
 
 function reportBody(rep, q) {
-  const team = rep.team;
+  const team = rep.kind === "team" ? rep.team : null;
   const isQ = rep.period.mode === "quarter";
-  const title = team ? `Team report · ${rep.engineers.length} engineers` : `Individual report · ${rep.engineers[0].engineer.name}`;
-  const teamTable = team ? `
-    <div class="card">
-      <div class="card-head"><div><h2>Team summary</h2><p>Team column is recalculated from everyone's combined numbers.${isQ ? " Cell colour = that engineer's quarter status." : ""}</p></div></div>
-      <div class="table-wrap"><table class="kr">
-        <thead><tr><th>Key result</th><th>Direction</th>${rep.engineers.map((e) => `<th class="r">${esc(e.engineer.name)}</th>`).join("")}<th class="r total">Team</th></tr></thead>
-        <tbody>${team.rows.map((r) => `
-          <tr>
-            <td><div class="kr-name">${esc(r.name)}</div><div class="kr-src">${esc(r.category)}</div></td>
-            <td class="muted" style="white-space:nowrap">${esc(app.meta.directionLabels[r.direction])}</td>
-            ${r.perEngineer.map((p) => `<td class="team-cell ${isQ ? p.status || "" : ""}">${esc(p.display)}</td>`).join("")}
-            <td class="val total">${esc(r.total.display)}<span class="inputs">${esc(r.total.inputs)}</span></td>
-          </tr>`).join("")}</tbody>
-      </table></div>
-    </div>` : "";
+  const title = team ? "Team Report" : `Individual report · ${rep.engineers[0].engineer.name}`;
+  const statusChips = (rows) => (isQ ? `<div class="chips">
+      <span class="pill exceeded">${rows.filter((x) => x.status === "exceeded").length}</span>
+      <span class="pill on-track">${rows.filter((x) => x.status === "on-track").length}</span>
+      <span class="pill at-risk">${rows.filter((x) => x.status === "at-risk").length}</span>
+    </div>` : "");
+
+  const head = `
+    <div class="card card-pad report-head">
+      <div>
+        <h2 style="font-size:17px">${esc(title)}</h2>
+        <div class="muted small">${esc(rep.period.label)} · generated ${new Date(rep.generatedAt).toLocaleString()}${rep.jiraMode === "demo" ? " · demo Jira data" : ""}</div>
+      </div>
+      <div class="row">
+        <a class="btn" href="/api/report/export?format=xlsx&${q}" download>${icon("download")} Excel</a>
+        <a class="btn" href="/api/report/export?format=pdf&${q}" download>${icon("download")} PDF</a>
+      </div>
+    </div>`;
+
+  if (team) {
+    return `
+      <div class="stack">
+        ${head}
+        <div class="card">
+          <div class="card-head">
+            <div>
+              <h2>${team.memberCount} members</h2>
+              <p>${esc(team.members.join(", "))}</p>
+            </div>
+            ${statusChips(team.rows)}
+          </div>
+          <div class="alert info" style="margin:12px 20px 0">Each value is the average of the members' own values. ${isQ ? "Status compares the team average with the average of the members' targets." : "Status appears in the quarter view."}</div>
+          ${(team.warnings || []).map((w) => `<div class="alert" style="margin:12px 20px 0">${esc(w)}</div>`).join("")}
+          ${krTable(team, { notes: false })}
+        </div>
+      </div>`;
+  }
 
   return `
     <div class="stack">
-      <div class="card card-pad report-head">
-        <div>
-          <h2 style="font-size:17px">${esc(title)}</h2>
-          <div class="muted small">${esc(rep.period.label)} · generated ${new Date(rep.generatedAt).toLocaleString()}${rep.jiraMode === "demo" ? " · demo Jira data" : ""}</div>
-        </div>
-        <div class="row">
-          <a class="btn" href="/api/report/export?format=xlsx&${q}" download>${icon("download")} Excel</a>
-          <a class="btn" href="/api/report/export?format=pdf&${q}" download>${icon("download")} PDF</a>
-        </div>
-      </div>
-      ${teamTable}
+      ${head}
       ${rep.engineers.map((r) => `
         <div class="card">
           <div class="card-head">
@@ -768,11 +780,7 @@ function reportBody(rep, q) {
               <div class="avatar" style="width:32px;height:32px;font-size:12px">${esc(initials(r.engineer.name))}</div>
               <div><h2>${esc(r.engineer.name)}</h2><p>${esc(r.projects.join(", ") || "No projects")}</p></div>
             </div>
-            ${isQ ? `<div class="chips">
-              <span class="pill exceeded">${r.rows.filter((x) => x.status === "exceeded").length}</span>
-              <span class="pill on-track">${r.rows.filter((x) => x.status === "on-track").length}</span>
-              <span class="pill at-risk">${r.rows.filter((x) => x.status === "at-risk").length}</span>
-            </div>` : ""}
+            ${statusChips(r.rows)}
           </div>
           ${r.warnings.map((w) => `<div class="alert" style="margin:12px 20px 0">${esc(w)}</div>`).join("")}
           ${krTable(r)}
