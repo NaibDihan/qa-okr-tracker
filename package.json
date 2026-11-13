@@ -10,6 +10,7 @@
   "scripts": {
     "start": "node server.js",
     "seed:demo": "node scripts/seed-demo.js",
-    "upload-data": "node scripts/upload-data.js"
+    "upload-data": "node scripts/upload-data.js",
+    "diagnose:cycle": "node scripts/diagnose-cycle.js"
   }
 }

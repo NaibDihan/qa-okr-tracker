@@ -478,6 +478,7 @@ async function renderEntry(view) {
     const bbMonth = (bb.months || {})[s.month] || { prs: 0, tests: 0 };
     const AUTO_FIELD = { scripts_added: bbMonth.tests, prs_merged: bbMonth.prs };
     const isAutoKr = (key) => bbAuto && (key === "scripts" || key === "prs");
+    const jiraCycleMonth = (okr.jiraCycle || {})[s.month] || { tickets: 0, hours: null };
 
     const preview = (key) => {
       const r = { ...raw };
@@ -485,6 +486,9 @@ async function renderEntry(view) {
         const typed = values[f] === "" || values[f] === undefined || values[f] === null ? null : Number(values[f]);
         r[f] = typed === null && bbAuto && f in AUTO_FIELD ? AUTO_FIELD[f] : typed;
       }
+      // Cycle time: a typed number of hours replaces Jira's average for this month.
+      const typedCycle = values.cycle_hours === "" || values.cycle_hours === undefined || values.cycle_hours === null ? null : Number(values.cycle_hours);
+      if (key === "cycle") return fmt("hours", typedCycle !== null ? typedCycle : jiraCycleMonth.hours);
       const kr = krs.find((k) => k.key === key);
       let v = null;
       if (key === "drr") v = r.bugsReported > 0 ? (r.bugsRejected / r.bugsReported) * 100 : null;
@@ -501,7 +505,7 @@ async function renderEntry(view) {
       if (key === "drr") return `${raw.bugsRejected} Won’t Do / ${raw.bugsReported} bugs reported`;
       if (key === "dde") return `${raw.bugsReported - raw.bugsRejected} valid bugs from Jira`;
       if (key === "pdl") return `${raw.bugsReported} bugs reported in Jira`;
-      if (key === "cycle") return `${raw.cycleHours.length} tickets went In QA → Closed`;
+      if (key === "cycle") return `${jiraCycleMonth.tickets} ticket${jiraCycleMonth.tickets === 1 ? "" : "s"} went In QA → Closed`;
       return "";
     };
 
@@ -509,6 +513,22 @@ async function renderEntry(view) {
       const fields = ENTRY_FIELDS[kr.key] || [];
       const isJira = ["drr", "cycle"].includes(kr.key);
       const mixed = ["dde", "pdl"].includes(kr.key);
+      if (kr.key === "cycle") {
+        const jiraVal = jiraCycleMonth.hours === null ? null : Math.round(jiraCycleMonth.hours * 100) / 100;
+        return `
+        <div class="card kr-card" data-kr="cycle">
+          <div class="top">
+            <div><h3 style="font-size:14px">${esc(kr.name)}</h3><div class="formula">${esc(kr.formula)}</div></div>
+            <span class="tag jira">Jira</span>
+          </div>
+          <div class="auto">
+            <span class="muted">${esc(autoLine("cycle"))}</span>
+            <span class="v" data-preview="cycle">${preview("cycle")}</span>
+          </div>
+          <label class="field">Override (optional, hours)<input type="number" min="0" step="0.01" inputmode="decimal" data-f="cycle_hours" value="${values.cycle_hours ?? ""}" placeholder="${jiraVal === null ? "No Jira tickets this month: type hours to set it" : `Leave empty to use ${jiraVal} h from Jira`}" /></label>
+          <label class="field">Comment<textarea data-c="cycle" placeholder="Optional: context, blockers, project breakdown…">${esc(entry.comments.cycle || "")}</textarea></label>
+        </div>`;
+      }
       if (isAutoKr(kr.key)) {
         const f = fields[0].f;
         const autoVal = AUTO_FIELD[f];
@@ -955,6 +975,44 @@ async function renderSetup(view) {
   });
 
   // ---- Project picker for one engineer ----
+  // ---- QA statuses for one project (Average QA Cycle Time) ----
+  const openFlowEditor = async (p, slot) => {
+    $$(".proj-slot").forEach((s) => s.classList.add("hidden"));
+    slot.classList.remove("hidden");
+    slot.innerHTML = `<div class="loading" style="padding:14px"><span class="spin"></span>Loading ${esc(p.jiraKey)}'s statuses from Jira…</div>`;
+    const def = app.meta.jira.statuses;
+    let names = [];
+    try {
+      names = await api(`/api/jira/project-statuses?site=${encodeURIComponent(p.site || "")}&key=${encodeURIComponent(p.jiraKey)}`);
+    } catch (e) {
+      toast(`Couldn't load ${p.jiraKey}'s statuses: ${e.message}`, true);
+    }
+    const opts = (cur, fallback) => {
+      const all = [...new Set([...names, cur, fallback].filter(Boolean))].sort((a, b) => a.localeCompare(b));
+      return `<option value="">Default (${esc(fallback)})</option>` + all.map((n) => `<option value="${esc(n)}" ${n === cur ? "selected" : ""}>${esc(n)}</option>`).join("");
+    };
+    slot.innerHTML = `
+      <div class="row" style="justify-content:space-between;margin-bottom:10px">
+        <h3>${esc(p.jiraKey)}${p.site ? ` <span class="muted small">${esc(siteName(p.site))}</span>` : ""}: QA statuses for Average QA Cycle Time</h3>
+        <button class="btn sm ghost" data-close>Close</button>
+      </div>
+      <div class="row" style="align-items:flex-end;gap:14px">
+        <label class="field">QA starts when a ticket moves to<select data-k="qaStart">${opts(p.qaStart, def.inQa)}</select></label>
+        <label class="field">QA is done when it moves directly to<select data-k="qaDone">${opts(p.qaDone, def.closed)}</select></label>
+        <button class="btn primary" data-save>${icon("check")} Save</button>
+      </div>
+      <p class="small muted" style="margin:10px 0 0">The timer restarts each time a ticket enters the first status, and a ticket counts only if it moves straight from the first status to the second.</p>`;
+    $("[data-close]", slot).addEventListener("click", () => slot.classList.add("hidden"));
+    $("[data-save]", slot).addEventListener("click", async () => {
+      try {
+        await api(`/api/projects/${p.id}`, { method: "PUT", body: { qaStart: $('[data-k="qaStart"]', slot).value, qaDone: $('[data-k="qaDone"]', slot).value } });
+        toast(`${p.jiraKey} QA statuses saved`);
+        await loadBase();
+        drawList();
+      } catch (e) { toast(e.message, true); }
+    });
+  };
+
   const openProjectPicker = async (eng, slot) => {
     if (!slot.classList.contains("hidden")) { slot.classList.add("hidden"); return; }
     $$(".proj-slot").forEach((s) => s.classList.add("hidden"));
@@ -1014,7 +1072,7 @@ async function renderSetup(view) {
             </div>
           </div>
           <div class="eng-projects">
-            ${projs.map((p) => `<span class="chip proj" title="${esc(p.name)}${p.site ? ` · ${esc(siteName(p.site))}` : ""}">${esc(p.jiraKey)}${multiSite() && p.site ? `<span class="chip-site">${esc(siteName(p.site))}</span>` : ""}<button type="button" data-unassign="${p.id}" aria-label="Remove ${esc(p.jiraKey)}">×</button></span>`).join("")}
+            ${projs.map((p) => `<span class="chip proj" title="${esc(p.name)}${p.site ? ` · ${esc(siteName(p.site))}` : ""} · click to set QA statuses"><button type="button" class="chip-key" data-flow="${p.id}">${esc(p.jiraKey)}${multiSite() && p.site ? `<span class="chip-site">${esc(siteName(p.site))}</span>` : ""}${p.qaStart || p.qaDone ? `<span class="chip-flow">${esc(p.qaStart || app.meta.jira.statuses.inQa)} → ${esc(p.qaDone || app.meta.jira.statuses.closed)}</span>` : ""}</button><button type="button" data-unassign="${p.id}" aria-label="Remove ${esc(p.jiraKey)}">×</button></span>`).join("")}
             <button type="button" class="btn sm" data-addproj>${icon("plus")} Project</button>
           </div>
           <div class="eng-actions">
@@ -1028,6 +1086,10 @@ async function renderSetup(view) {
     $$(".eng-row").forEach((row) => {
       const eng = app.engineers.find((x) => x.id === Number(row.dataset.id));
       $("[data-addproj]", row).addEventListener("click", () => openProjectPicker(eng, $(".proj-slot", row)));
+      $$("[data-flow]", row).forEach((b) => b.addEventListener("click", () => {
+        const p = app.projects.find((x) => x.id === Number(b.dataset.flow));
+        if (p) openFlowEditor(p, $(".proj-slot", row));
+      }));
       $$("[data-unassign]", row).forEach((b) => b.addEventListener("click", async () => {
         try {
           await api(`/api/projects/${b.dataset.unassign}`, { method: "DELETE" });
