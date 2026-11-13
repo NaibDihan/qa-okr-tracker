@@ -271,9 +271,19 @@ function drillDown(result) {
     return base ? `<a href="${esc(base)}/browse/${esc(k)}" target="_blank" rel="noopener">${esc(k)}</a>${tag}` : esc(k);
   };
   const { bugs, cycle } = result.details;
+  const prs = result.details.prs || [];
+  const bbOn = result.bitbucket?.enabled;
+  const prTable = bbOn ? `
+        <div style="grid-column:1 / -1">
+          <h3 style="margin-bottom:8px">PRs merged into ${esc(app.meta.bitbucket?.branch || "main")} (Bitbucket)</h3>
+          <div class="scroll"><table class="simple">
+            <thead><tr><th>PR</th><th>Title</th><th>Merged</th><th style="text-align:right">New tests</th></tr></thead>
+            <tbody>${prs.map((p) => `<tr><td><a href="${esc(p.url)}" target="_blank" rel="noopener">#${p.id}</a>${(app.meta.bitbucket?.repos || []).length > 1 ? ` <span class="muted small">${esc(p.repo.split("/")[1])}</span>` : ""}</td><td>${esc(p.title)}</td><td class="num">${p.merged}</td><td class="num" style="text-align:right">${p.tests}</td></tr>`).join("") || `<tr><td colspan="4" class="muted">None</td></tr>`}</tbody>
+          </table></div>
+        </div>` : "";
   return `
     <details class="drill">
-      <summary>Jira tickets behind these numbers <span class="muted small">(${bugs.length} bugs · ${cycle.length} QA cycle tickets)</span></summary>
+      <summary>${bbOn ? "Jira tickets and Bitbucket PRs" : "Jira tickets"} behind these numbers <span class="muted small">(${bugs.length} bugs · ${cycle.length} QA cycle tickets${bbOn ? ` · ${prs.length} PRs` : ""})</span></summary>
       <div class="drill-body">
         <div>
           <h3 style="margin-bottom:8px">Bugs reported</h3>
@@ -288,7 +298,7 @@ function drillDown(result) {
             <thead><tr><th>Key</th><th>Closed</th><th style="text-align:right">Hours in QA</th></tr></thead>
             <tbody>${cycle.map((c) => `<tr><td>${link(c.key, c.site)}</td><td class="num">${c.closed}</td><td class="num" style="text-align:right">${c.hours.toFixed(2)}</td></tr>`).join("") || `<tr><td colspan="3" class="muted">None</td></tr>`}</tbody>
           </table></div>
-        </div>
+        </div>${prTable}
       </div>
     </details>`;
 }
@@ -462,10 +472,18 @@ async function renderEntry(view) {
     const values = { ...(entry.entry || {}) };
     const krs = app.meta.krs;
 
+    // Bitbucket fills scripts and PRs automatically; a typed number overrides it for this month.
+    const bb = okr.bitbucket || {};
+    const bbAuto = bb.enabled && !bb.error;
+    const bbMonth = (bb.months || {})[s.month] || { prs: 0, tests: 0 };
+    const AUTO_FIELD = { scripts_added: bbMonth.tests, prs_merged: bbMonth.prs };
+    const isAutoKr = (key) => bbAuto && (key === "scripts" || key === "prs");
+
     const preview = (key) => {
       const r = { ...raw };
       for (const f of ["test_cases", "production_bugs", "releases", "signoffs", "scripts_added", "prs_merged"]) {
-        r[f] = values[f] === "" || values[f] === undefined || values[f] === null ? null : Number(values[f]);
+        const typed = values[f] === "" || values[f] === undefined || values[f] === null ? null : Number(values[f]);
+        r[f] = typed === null && bbAuto && f in AUTO_FIELD ? AUTO_FIELD[f] : typed;
       }
       const kr = krs.find((k) => k.key === key);
       let v = null;
@@ -491,6 +509,26 @@ async function renderEntry(view) {
       const fields = ENTRY_FIELDS[kr.key] || [];
       const isJira = ["drr", "cycle"].includes(kr.key);
       const mixed = ["dde", "pdl"].includes(kr.key);
+      if (isAutoKr(kr.key)) {
+        const f = fields[0].f;
+        const autoVal = AUTO_FIELD[f];
+        const line = kr.key === "scripts"
+          ? `Bitbucket: ${bbMonth.tests} new test${bbMonth.tests === 1 ? "" : "s"} in ${bbMonth.prs} merged PR${bbMonth.prs === 1 ? "" : "s"}`
+          : `Bitbucket: ${bbMonth.prs} PR${bbMonth.prs === 1 ? "" : "s"} merged into ${esc(app.meta.bitbucket?.branch || "main")}`;
+        return `
+        <div class="card kr-card" data-kr="${kr.key}">
+          <div class="top">
+            <div><h3 style="font-size:14px">${esc(kr.name)}</h3><div class="formula">${esc(kr.key === "scripts" ? "New test() functions in merged PRs" : "PRs merged into " + (app.meta.bitbucket?.branch || "main"))}</div></div>
+            <span class="tag jira">Bitbucket</span>
+          </div>
+          <div class="auto">
+            <span class="muted">${line}</span>
+            <span class="v" data-preview="${kr.key}">${preview(kr.key)}</span>
+          </div>
+          <label class="field">Override (optional)<input type="number" min="0" step="1" inputmode="numeric" data-f="${f}" value="${values[f] ?? ""}" placeholder="Leave empty to use ${autoVal} from Bitbucket" /></label>
+          <label class="field">Comment<textarea data-c="${kr.key}" placeholder="Optional: context, blockers, project breakdown…">${esc(entry.comments[kr.key] || "")}</textarea></label>
+        </div>`;
+      }
       return `
         <div class="card kr-card" data-kr="${kr.key}">
           <div class="top">
@@ -823,7 +861,7 @@ async function renderSetup(view) {
     <div class="stack">
       <div class="card">
         <div class="card-head">
-          <div><h2>Jira connection</h2><p>Set by environment variables: the <code>.env</code> file locally, or Project Settings → Environment Variables on Vercel. Restart or redeploy after changing them.</p></div>
+          <div><h2>Jira & Bitbucket connection</h2><p>Set by environment variables: the <code>.env</code> file locally, or Project Settings → Environment Variables on Vercel. Restart or redeploy after changing them.</p></div>
           <button class="btn" id="s-test">Test connection</button>
         </div>
         <div class="card-pad grid-2">
@@ -833,6 +871,7 @@ async function renderSetup(view) {
             <dt>Account</dt><dd>${esc(j.email || "—")}</dd>
           </dl>
           <dl class="kv">
+            <dt>Bitbucket</dt><dd>${app.meta.bitbucket?.enabled ? `${app.meta.bitbucket.repos.map((r) => esc(r)).join("<br>")} <span class="muted small">(merged into ${esc(app.meta.bitbucket.branch)})</span>` : `<span class="muted">Not configured: scripts and PRs are manual</span>`}</dd>
             <dt>Data storage</dt><dd>${app.meta.storage?.kind === "redis" ? "Upstash Redis (cloud)" : app.meta.storage?.kind === "missing" ? `<span style="color:var(--danger)">Not connected</span>` : "Local file"}</dd>
             <dt>Bug issue type</dt><dd><code>${esc(j.bugType)}</code></dd>
             <dt>Rejected status</dt><dd><code>${esc(j.statuses.rejected)}</code></dd>

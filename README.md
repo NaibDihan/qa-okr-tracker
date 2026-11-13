@@ -49,6 +49,21 @@ The API account needs **Browse projects** on the QA projects and the **Browse us
 
 The `.env` file holds your token. Don't commit or share it.
 
+## Connect Bitbucket (automation KRs)
+
+**Automated Test Scripts Added** and **PR Merged (Automation)** can fill in automatically from Bitbucket:
+
+- **PR Merged:** pull requests merged into `BITBUCKET_BRANCH` (default `main`), counted in the month they were merged, for the engineer who opened the PR. Engineers are matched by their Atlassian account, the same one linked from Jira in Setup.
+- **Test Scripts Added:** new Playwright `test(...)` functions in those PRs, including `test.skip`, `test.only`, `test.fixme`, `test.fail` and `test.slow`. A test that was only edited or moved isn't counted. `test.describe`, `test.step`, hooks and commented-out lines aren't tests. Only `.ts` / `.js` files are read.
+- **Editable:** on Monthly Entry, both fields show the Bitbucket number. Type a number to override that month; clear it to go back to Bitbucket.
+
+Setup:
+1. Create a token: Atlassian account → **Security → Create API token with scopes** → app **Bitbucket** → scopes `read:repository:bitbucket` and `read:pullrequest:bitbucket`.
+2. Set `BITBUCKET_REPOS`, `BITBUCKET_BRANCH`, `BITBUCKET_EMAIL` (your Atlassian email) and `BITBUCKET_API_TOKEN` in `.env` locally and in Vercel's Environment Variables.
+3. Restart (or redeploy) and press **Setup → Test connection**.
+
+The Dashboard's "behind these numbers" section lists each merged PR and how many new tests it added.
+
 ## Deploy on Vercel
 
 Vercel can't save files (its disk is read-only and reset between requests), so the data goes in a small cloud database instead. Upstash Redis has a free tier and Vercel connects it for you.
