@@ -94,7 +94,7 @@ Keep `data/` in `.gitignore`. Committing it wouldn't help: Vercel can't write to
 
 **Jira scope:**
 - "Bugs reported" means issues of type Bug whose **reporter** is the engineer, in the engineer's assigned projects, counted in the month they were **created**.
-- QA cycle time covers **all issue types** in the engineer's projects, counted in the month they were **Closed**. Each move into In QA restarts the timer. Any move to a status other than Closed resets it. A ticket counts only if it goes In QA → Closed directly.
+- QA cycle time covers **all issue types** in the engineer's projects, counted in the month they were **Closed**. A project can have **several QA engineers**: in a shared project each ticket counts for the QA who moved it to the done status (Jira records who made each change). In a project with one QA, all of its tickets count for that QA. Each move into In QA restarts the timer. Any move to a status other than Closed resets it. A ticket counts only if it goes In QA → Closed directly.
 - Status names are set by environment variables (see `.env.example`). Case and apostrophe style don't matter.
 
 **Periods and status:**

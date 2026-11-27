@@ -293,10 +293,10 @@ function drillDown(result) {
           </table></div>
         </div>
         <div>
-          <h3 style="margin-bottom:8px">Tickets In QA → Closed</h3>
+          <h3 style="margin-bottom:8px">Tickets through QA</h3>
           <div class="scroll"><table class="simple">
-            <thead><tr><th>Key</th><th>Closed</th><th style="text-align:right">Hours in QA</th></tr></thead>
-            <tbody>${cycle.map((c) => `<tr><td>${link(c.key, c.site)}</td><td class="num">${c.closed}</td><td class="num" style="text-align:right">${c.hours.toFixed(2)}</td></tr>`).join("") || `<tr><td colspan="3" class="muted">None</td></tr>`}</tbody>
+            <thead><tr><th>Key</th><th>Closed</th><th>Closed by</th><th style="text-align:right">Hours in QA</th></tr></thead>
+            <tbody>${cycle.map((c) => `<tr><td>${link(c.key, c.site)}</td><td class="num">${c.closed}</td><td class="small">${esc(c.closedBy || "—")}</td><td class="num" style="text-align:right">${c.hours.toFixed(2)}</td></tr>`).join("") || `<tr><td colspan="4" class="muted">None</td></tr>`}</tbody>
           </table></div>
         </div>${prTable}
       </div>
@@ -1001,7 +1001,7 @@ async function renderSetup(view) {
         <label class="field">QA is done when it moves directly to<select data-k="qaDone">${opts(p.qaDone, def.closed)}</select></label>
         <button class="btn primary" data-save>${icon("check")} Save</button>
       </div>
-      <p class="small muted" style="margin:10px 0 0">The timer restarts each time a ticket enters the first status, and a ticket counts only if it moves straight from the first status to the second.</p>`;
+      <p class="small muted" style="margin:10px 0 0">The timer restarts each time a ticket enters the first status, and a ticket counts only if it moves straight from the first status to the second.${(p.engineerIds || []).length > 1 ? " These statuses apply to every QA on this project. With several QAs, each ticket counts for the QA who moved it to the second status." : ""}</p>`;
     $("[data-close]", slot).addEventListener("click", () => slot.classList.add("hidden"));
     $("[data-save]", slot).addEventListener("click", async () => {
       try {
@@ -1022,26 +1022,24 @@ async function renderSetup(view) {
       const { projects, warnings } = await getProjects(false);
       // Saved projects come back from /api/projects with their site filled in.
       const owner = (p) => app.projects.find((x) => x.jiraKey === p.key && (!p.site || x.site === p.site));
-      const items = projects.filter((p) => owner(p)?.engineerId !== eng.id);
+      // Names of the other QAs already on a project (a project can have several).
+      const others = (p) => (owner(p)?.engineerIds || []).filter((id) => id !== eng.id).map((id) => app.engineers.find((e) => e.id === id)?.name).filter(Boolean);
+      const items = projects.filter((p) => !(owner(p)?.engineerIds || []).includes(eng.id));
       searchList(slot, {
         items,
         placeholder: `Search ${projects.length} Jira projects by key or name…`,
         empty: "All projects are already assigned to this engineer.",
         searchText: (p) => `${p.key} ${p.name} ${p.siteLabel || ""}`,
         itemHtml: (p) => {
-          const o = owner(p);
-          const ownerName = o?.engineerId ? app.engineers.find((e) => e.id === o.engineerId)?.name : null;
+          const also = others(p);
           return `<span class="proj-key">${esc(p.key)}</span>
-            <span class="pick-main"><b>${esc(p.name)}</b>${ownerName || multiSite() ? `<span class="muted small">${esc([multiSite() ? p.siteLabel : "", ownerName ? `Currently: ${ownerName}` : ""].filter(Boolean).join(" · "))}</span>` : ""}</span>
-            <span class="pick-act">${icon("plus")} ${ownerName ? "Move here" : "Assign"}</span>`;
+            <span class="pick-main"><b>${esc(p.name)}</b>${also.length || multiSite() ? `<span class="muted small">${esc([multiSite() ? p.siteLabel : "", also.length ? `Also: ${also.join(", ")}` : ""].filter(Boolean).join(" · "))}</span>` : ""}</span>
+            <span class="pick-act">${icon("plus")} ${also.length ? "Add as another QA" : "Assign"}</span>`;
         },
         onPick: async (p) => {
-          const o = owner(p);
-          const ownerName = o?.engineerId ? app.engineers.find((e) => e.id === o.engineerId)?.name : null;
-          if (ownerName && !confirm(`${p.key} is assigned to ${ownerName}. A project has one QA. Move it to ${eng.name}?`)) return;
           try {
             await api("/api/projects/assign", { method: "PUT", body: { jiraKey: p.key, name: p.name, engineerId: eng.id, site: p.site || "" } });
-            toast(`${p.key} assigned to ${eng.name}`);
+            toast(others(p).length ? `${eng.name} added to ${p.key} (with ${others(p).join(", ")})` : `${p.key} assigned to ${eng.name}`);
             await loadBase();
             drawList();
           } catch (e) { toast(e.message, true); }
@@ -1061,7 +1059,7 @@ async function renderSetup(view) {
       return;
     }
     list.innerHTML = app.engineers.map((e) => {
-      const projs = app.projects.filter((p) => p.engineerId === e.id);
+      const projs = app.projects.filter((p) => (p.engineerIds || []).includes(e.id));
       return `
         <div class="eng-row" data-id="${e.id}">
           <div class="eng-main">
@@ -1072,7 +1070,7 @@ async function renderSetup(view) {
             </div>
           </div>
           <div class="eng-projects">
-            ${projs.map((p) => `<span class="chip proj" title="${esc(p.name)}${p.site ? ` · ${esc(siteName(p.site))}` : ""} · click to set QA statuses"><button type="button" class="chip-key" data-flow="${p.id}">${esc(p.jiraKey)}${multiSite() && p.site ? `<span class="chip-site">${esc(siteName(p.site))}</span>` : ""}${p.qaStart || p.qaDone ? `<span class="chip-flow">${esc(p.qaStart || app.meta.jira.statuses.inQa)} → ${esc(p.qaDone || app.meta.jira.statuses.closed)}</span>` : ""}</button><button type="button" data-unassign="${p.id}" aria-label="Remove ${esc(p.jiraKey)}">×</button></span>`).join("")}
+            ${projs.map((p) => `<span class="chip proj" title="${esc(p.name)}${p.site ? ` · ${esc(siteName(p.site))}` : ""}${p.engineerIds.length > 1 ? ` · QAs: ${esc(p.engineerIds.map((id) => app.engineers.find((x) => x.id === id)?.name).filter(Boolean).join(", "))}` : ""} · click to set QA statuses"><button type="button" class="chip-key" data-flow="${p.id}">${esc(p.jiraKey)}${multiSite() && p.site ? `<span class="chip-site">${esc(siteName(p.site))}</span>` : ""}${p.qaStart || p.qaDone ? `<span class="chip-flow">${esc(p.qaStart || app.meta.jira.statuses.inQa)} → ${esc(p.qaDone || app.meta.jira.statuses.closed)}</span>` : ""}${p.engineerIds.length > 1 ? `<span class="chip-shared">+${p.engineerIds.length - 1} QA</span>` : ""}</button><button type="button" data-unassign="${p.id}" aria-label="Remove ${esc(p.jiraKey)}">×</button></span>`).join("")}
             <button type="button" class="btn sm" data-addproj>${icon("plus")} Project</button>
           </div>
           <div class="eng-actions">
@@ -1092,7 +1090,8 @@ async function renderSetup(view) {
       }));
       $$("[data-unassign]", row).forEach((b) => b.addEventListener("click", async () => {
         try {
-          await api(`/api/projects/${b.dataset.unassign}`, { method: "DELETE" });
+          // Takes only this QA off the project; other QAs and its status settings stay.
+          await api(`/api/projects/${b.dataset.unassign}/engineers/${eng.id}`, { method: "DELETE" });
           await loadBase();
           drawList();
         } catch (e) { toast(e.message, true); }

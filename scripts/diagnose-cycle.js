@@ -111,7 +111,10 @@ for (const { site, flow, keys } of groups.values()) {
       else if (normStatus(last.from) !== inQa) why = `last move to "${st.closed}" came from "${last.from}", not "${st.inQa}"`;
       else why = "closed outside the month";
     }
-    line(`  ${issue.key || "id:" + issue.id}: ${r ? `COUNTED, ${r.hours.toFixed(2)} h` : `not counted (${why})`}`);
+    const shared = projects.find((p) => p.jiraKey === String(issue.key || "").split("-")[0])?.engineerIds?.length > 1;
+    const mine = !shared || r?.closedBy === eng.jiraAccountId;
+    const who = r?.closedByName ? ` · closed by ${r.closedByName}` : "";
+    line(`  ${issue.key || "id:" + issue.id}: ${r ? (mine ? `COUNTED, ${r.hours.toFixed(2)} h${who}` : `not this QA's (shared project${who})`) : `not counted (${why})`}`);
     for (const s of steps.slice(-6)) line(`      ${s}`);
   }
 }
